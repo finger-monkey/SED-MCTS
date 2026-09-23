@@ -1,0 +1,3 @@
+-r MCTS-4-SR/requirements.txt
+h5py>=3.10.0
+matplotlib>=3.8.0

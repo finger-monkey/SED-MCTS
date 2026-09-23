@@ -1,0 +1,320 @@
+from __future__ import annotations
+import copy
+import random
+from typing import List, Optional, Tuple
+
+import numpy as np
+
+from iMCTS.gp import GPManager
+from iMCTS.src import ExpTree, Exp_Queue, Optimizer, StatisticalPolicyValue
+
+
+class MCTS_Node:
+    def __init__(
+        self,
+        mcts: "MCTS",
+        parent: Optional["MCTS_Node"] = None,
+        move: str = "",
+    ) -> None:
+        self.mcts = mcts
+        self.parent = parent
+        self.move = move
+        self.children: List["MCTS_Node"] = []
+        self.visits: int = 0
+        self.path_queue = Exp_Queue(max_size=mcts.K)
+        self.unexpanded_moves: List[str] = []
+        self.is_terminal: bool = False
+
+    def get_prefix_path(self) -> List[str]:
+        path: List[str] = []
+        cur: Optional["MCTS_Node"] = self
+        while cur is not None and cur.parent is not None:
+            path.append(cur.move)
+            cur = cur.parent
+        path.reverse()
+        return path
+
+    def expand(self, state: ExpTree) -> Optional["MCTS_Node"]:
+        if not self.unexpanded_moves:
+            self.unexpanded_moves = list(state.available_ops)
+        if not self.unexpanded_moves:
+            return None
+
+        prefix = self.get_prefix_path()
+        prior = self.mcts.stat_policy.get_action_prior(prefix, self.unexpanded_moves)
+        probs = np.array([prior.get(a, 0.0) for a in self.unexpanded_moves], dtype=float)
+
+        if probs.sum() <= 1e-12:
+            idx = random.randrange(len(self.unexpanded_moves))
+        else:
+            probs = probs / probs.sum()
+            idx = int(np.random.choice(len(self.unexpanded_moves), p=probs))
+
+        move = self.unexpanded_moves.pop(idx)
+        child = MCTS_Node(mcts=self.mcts, parent=self, move=move)
+        self.children.append(child)
+
+        if self.mcts.verbose and self.mcts.debug_print_prior_every > 0 and self.mcts.count_num % self.mcts.debug_print_prior_every == 0:
+            print(f"[PRIOR][expand] prefix={prefix} -> choose='{move}'")
+            for line in self.mcts.stat_policy.debug_state_summary(prefix, [c.move for c in self.children] + self.unexpanded_moves, top_k=self.mcts.debug_top_k):
+                print(f"  {line}")
+
+        return child
+
+    def q_value(self) -> float:
+        if self.path_queue.list:
+            return float(self.path_queue.best()[1])
+        return float(self.mcts.stat_policy.get_state_value(self.get_prefix_path()))
+
+    def puct(self) -> float:
+        q = self.q_value()
+        if self.parent is None:
+            return q
+
+        parent_visits = max(self.parent.visits, 1)
+        visits = max(self.visits, 1)
+
+        prefix = self.parent.get_prefix_path()
+        sibling_actions = [c.move for c in self.parent.children]
+        prior_dist = self.mcts.stat_policy.get_action_prior(prefix, sibling_actions)
+        p_sa = prior_dist.get(self.move, 1.0 / max(len(sibling_actions), 1))
+        risk = self.mcts.stat_policy.get_action_risk(prefix, self.move)
+
+        u = self.mcts.c * p_sa * (np.sqrt(parent_visits) / (1.0 + visits))
+        return q + u - self.mcts.risk_lambda * risk
+
+    def choose(self) -> "MCTS_Node":
+        valid = [c for c in self.children if not (c.is_terminal and c.visits > 0)]
+        if not valid:
+            valid = self.children
+        return max(valid, key=lambda c: c.puct())
+
+    def random_child(self) -> "MCTS_Node":
+        valid = [c for c in self.children if not c.is_terminal]
+        if valid:
+            return random.choice(valid)
+        return random.choice(self.children)
+
+    def backpropagate(self, path: List[str], value: float) -> None:
+        cur: Optional["MCTS_Node"] = self
+        remain = list(path)
+        while cur is not None:
+            if not cur.path_queue.append(remain, value):
+                break
+            if cur.parent is not None:
+                remain = [cur.move] + remain
+            cur = cur.parent
+
+    def propagate(self, path: List[str], value: float) -> None:
+        cur: Optional["MCTS_Node"] = self
+        for i, action in enumerate(path):
+            cur = next((child for child in cur.children if child.move == action), None) if cur else None
+            if cur is None:
+                break
+            cur.path_queue.append(path[i + 1 :], value)
+
+    def is_leaf(self) -> bool:
+        return not self.children or bool(self.unexpanded_moves)
+
+
+class MCTS:
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        gp_manager: GPManager,
+        gp_rate: float = 0.2,
+        mutation_rate: float = 0.2,
+        exploration_rate: float = 0.2,
+        K: int = 500,
+        c: float = 4,
+        gamma: float = 0.5,
+        verbose: bool = False,
+        succ_error_tol: float = 1e-6,
+        stat_policy: Optional[StatisticalPolicyValue] = None,
+        risk_lambda: float = 0.5,
+        rollout_guided: bool = True,
+        rollout_epsilon: float = 0.15,
+        rollout_temperature: float = 1.0,
+        debug_print_rollout_every: int = 100,
+        debug_print_prior_every: int = 200,
+        debug_print_stats_every: int = 200,
+        debug_top_k: int = 5,
+    ) -> None:
+        self.optimizer = optimizer
+        self.gp_manager = gp_manager
+        self.gp_rate = gp_rate
+        self.mutation_rate = mutation_rate
+        self.exploration_rate = exploration_rate
+        self.K = K
+        self.c = c
+        self.gamma = gamma
+        self.verbose = verbose
+        self.succ_error_tol = succ_error_tol
+        self.risk_lambda = max(0.0, risk_lambda)
+
+        self.stat_policy = stat_policy or StatisticalPolicyValue()
+
+        self.rollout_guided = rollout_guided
+        self.rollout_epsilon = float(np.clip(rollout_epsilon, 0.0, 1.0))
+        self.rollout_temperature = max(float(rollout_temperature), 1e-6)
+
+        self.debug_print_rollout_every = max(0, debug_print_rollout_every)
+        self.debug_print_prior_every = max(0, debug_print_prior_every)
+        self.debug_print_stats_every = max(0, debug_print_stats_every)
+        self.debug_top_k = max(1, debug_top_k)
+
+        self.root = MCTS_Node(mcts=self)
+        self.exp_queue = Exp_Queue(max_size=10)
+        self.count_num: int = 0
+        self.best_reward: float = -np.inf
+        self.total_nodes: int = 1
+
+    def _maybe_print_stats_snapshot(self) -> None:
+        if not self.verbose or self.debug_print_stats_every <= 0:
+            return
+        if self.count_num % self.debug_print_stats_every != 0:
+            return
+
+        root_actions = [c.move for c in self.root.children]
+        if not root_actions:
+            return
+
+        print(f"[STAT][iter={self.count_num}] root prior/risk snapshot:")
+        for line in self.stat_policy.debug_state_summary([], root_actions, top_k=self.debug_top_k):
+            print(f"  {line}")
+
+    def search(self, exp_tree: ExpTree):
+        node = self.root
+        self.count_num += 1
+        node.visits += 1
+        state = copy.deepcopy(exp_tree)
+
+        while not node.is_leaf():
+            if random.random() < self.gp_rate:
+                gp_reward = self._perform_mutation(node, state) if random.random() < self.mutation_rate else self._perform_crossover(node, state)
+                self.best_reward = max(self.best_reward, gp_reward)
+
+            node = node.random_child() if random.random() < self.exploration_rate else node.choose()
+            node.visits += 1
+            state.add_op(node.move)
+
+        if not state.is_terminal():
+            child = node.expand(state)
+            if child is not None:
+                node = child
+                self.total_nodes += 1
+                node.visits += 1
+                state.add_op(node.move)
+
+        sim_reward, path = self.rollout_once(state)
+        self.best_reward = max(self.best_reward, sim_reward)
+
+        if not path:
+            node.is_terminal = True
+        node.backpropagate(path, sim_reward)
+
+        episode = node.get_prefix_path() + list(path)
+        self.stat_policy.record_episode(episode, sim_reward)
+
+        if self.verbose and self.debug_print_rollout_every > 0 and self.count_num % self.debug_print_rollout_every == 0:
+            mode = "guided" if self.rollout_guided else "random"
+            print(f"[ROLLOUT][{mode}][iter={self.count_num}] prefix={node.get_prefix_path()} sampled_path={path} reward={sim_reward:.6f}")
+
+        self._update_terminal_status(node)
+
+        if node.parent is not None:
+            for parent_path, parent_reward in node.parent.path_queue.list:
+                node.parent.propagate(parent_path, parent_reward)
+
+        self._maybe_print_stats_snapshot()
+        return self.best_reward
+
+    def _update_terminal_status(self, node: MCTS_Node) -> None:
+        cur = node
+        while cur and cur.parent:
+            parent = cur.parent
+            if parent.children and all(ch.is_terminal for ch in parent.children) and not parent.unexpanded_moves:
+                if not parent.is_terminal:
+                    parent.is_terminal = True
+                    cur = parent
+                else:
+                    break
+            else:
+                break
+
+    def _perform_mutation(self, node: MCTS_Node, state: ExpTree) -> float:
+        try:
+            old_path = node.path_queue.random_sample()[0]
+            new_path = self.gp_manager.mutate(state, old_path)
+            reward, path = self.rollout_once(state, new_path)
+            self.count_num += 1
+            node.backpropagate(path, reward)
+            node.propagate(path, reward)
+            self.stat_policy.record_episode(node.get_prefix_path() + list(path), reward)
+            return reward
+        except Exception:
+            return 0.0
+
+    def _perform_crossover(self, node: MCTS_Node, state: ExpTree) -> float:
+        path1 = node.path_queue.random_sample()[0]
+        path2 = node.path_queue.random_sample()[0]
+        new_path1, new_path2 = self.gp_manager.crossover(state, path1, path2)
+
+        rewards: List[float] = []
+        for path in [new_path1, new_path2]:
+            try:
+                reward, final_path = self.rollout_once(state, path)
+                self.count_num += 1
+                node.backpropagate(final_path, reward)
+                node.propagate(final_path, reward)
+                self.stat_policy.record_episode(node.get_prefix_path() + list(final_path), reward)
+                rewards.append(reward)
+            except ValueError:
+                rewards.append(0.0)
+        return max(rewards) if rewards else 0.0
+
+    def reward(self, state: ExpTree) -> float:
+        expression, reward = self.optimizer.optimize_constants(state)
+        self.exp_queue.append(expression, reward)
+        return reward
+
+    def _sample_guided_rollout_path(self, state: ExpTree) -> List[str]:
+        sampled: List[str] = []
+        while not state.is_terminal():
+            actions = list(state.available_ops)
+            if not actions:
+                break
+
+            if random.random() < self.rollout_epsilon:
+                op = random.choice(actions)
+            else:
+                prefix = state.op_list
+                prior = self.stat_policy.get_action_prior(prefix, actions)
+                probs = np.array([prior.get(a, 0.0) for a in actions], dtype=float)
+                if probs.sum() <= 1e-12:
+                    op = random.choice(actions)
+                else:
+                    probs = probs ** (1.0 / self.rollout_temperature)
+                    probs = probs / probs.sum()
+                    op = actions[int(np.random.choice(len(actions), p=probs))]
+
+            state.add_op(op)
+            sampled.append(op)
+
+        return sampled
+
+    def rollout_once(self, state: ExpTree, path: Optional[List[str]] = None) -> Tuple[float, List[str]]:
+        if path:
+            cloned = copy.deepcopy(state)
+            for op in path:
+                cloned.add_op(op)
+            return self.reward(cloned), path
+
+        cloned = copy.deepcopy(state)
+        if self.rollout_guided:
+            sampled_path = self._sample_guided_rollout_path(cloned)
+            return self.reward(cloned), sampled_path
+
+        filled_state, sampled_path = cloned.random_fill()
+        return self.reward(filled_state), sampled_path
+
