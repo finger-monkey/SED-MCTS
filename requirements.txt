@@ -1,0 +1,18 @@
+numpy
+sympy
+scipy
+sortedcontainers
+
+- Python 3.9+
+- `numpy`
+- `sympy`
+- `scikit-learn`
+- `torch`
+- `matplotlib`
+
+
+
+
+
+
+

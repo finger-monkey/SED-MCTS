@@ -1,0 +1,461 @@
+SSDE 实验方程数据说明
+======================
+
+来源代码仓库：
+https://github.com/Hintonein/SSDE
+
+本说明基于本地代码目录：
+D:\课程学习\结构搜索+蒙特卡洛树\PINN_Taylor - MCTS20251230\SSDE-main
+
+你当前复制的数据目录：
+D:\课程学习\结构搜索+蒙特卡洛树\PINN_Taylor - MCTS20251230\mcts_prior_experiments\data
+
+涉及的数据文件：
+- heat2d_truth.csv
+- heat3d_truth.csv
+- poisson2d_truth.csv
+- poisson3d_truth.csv
+- wave2d_truth.csv
+- wave3d_truth.csv
+
+
+一、总体理解
+------------
+
+这 6 个 CSV 文件本质上是 SSDE 符号回归实验中使用的“解析真值函数采样数据”。
+
+每一行表示一个随机采样点：
+
+    [输入变量, u]
+
+其中：
+- 前面若干列是输入坐标，例如 x1, x2, x3 或 t, x1, x2, x3；
+- 最后一列是该点对应的真值函数值 u；
+- CSV 文件没有表头；
+- 每个文件大约包含 500 个随机采样点。
+
+重要注意：
+这些文件不是完整的 PINN 数据集，不包含显式的边界条件点、初始条件点、PDE 残差点或网格解矩阵。它们主要用于从点数据恢复解析表达式 u。
+
+
+二、文件结构汇总
+----------------
+
+1. poisson2d_truth.csv
+
+形状：500 x 3
+列含义：
+
+    x1, x2, u
+
+2. poisson3d_truth.csv
+
+形状：500 x 4
+列含义：
+
+    x1, x2, x3, u
+
+3. heat2d_truth.csv
+
+形状：500 x 4
+列含义：
+
+    t, x1, x2, u
+
+4. heat3d_truth.csv
+
+形状：500 x 5
+列含义：
+
+    t, x1, x2, x3, u
+
+5. wave2d_truth.csv
+
+形状：500 x 4
+列含义：
+
+    t, x1, x2, u
+
+6. wave3d_truth.csv
+
+形状：500 x 5
+列含义：
+
+    t, x1, x2, x3, u
+
+说明：
+- poisson2d/poisson3d 没有时间变量，只有空间变量。
+- heat2d/heat3d 和 wave2d/wave3d 的第一列是时间 t。
+- 文件名中的 2d/3d 表示空间维度，不包括时间维度。
+  例如 heat2d 的输入实际是 t, x1, x2，共 3 个输入变量。
+
+
+三、各数据文件的生成公式
+------------------------
+
+这些公式来自 SSDE-main\ssde\experiments\regression\regression.ipynb 中的数据生成代码。
+
+
+1. poisson2d_truth.csv
+
+采样范围：
+
+    x1, x2 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(x1, x2) = 2.5*x1^4 - 1.3*x1^3 + 0.5*x2^2 - 1.7*x2
+
+数据列：
+
+    [x1, x2, u]
+
+适合作为二维 Poisson 类型实验中的解析真值函数数据。
+
+
+2. poisson3d_truth.csv
+
+采样范围：
+
+    x1, x2, x3 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(x1, x2, x3) = 2.5*x1^4 - 1.3*x2^3 + 0.5*x3^2
+
+数据列：
+
+    [x1, x2, x3, u]
+
+注意：
+- 四次项在 x1 上；
+- 三次项在 x2 上；
+- 二次项在 x3 上。
+
+
+3. heat2d_truth.csv
+
+采样范围：
+
+    t ~ Uniform(0, 1)
+    x1, x2 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(t, x1, x2) = 2.5*x1^4 - 1.3*x2^3 + 0.5*t^2
+
+数据列：
+
+    [t, x1, x2, u]
+
+示例：
+如果一行数据为：
+
+    0.851323, -0.172075, 0.259237, 0.341920
+
+则表示：
+
+    t  = 0.851323
+    x1 = -0.172075
+    x2 = 0.259237
+    u  = 0.341920
+
+
+4. heat3d_truth.csv
+
+采样范围：
+
+    t ~ Uniform(0, 1)
+    x1, x2, x3 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(t, x1, x2, x3) = 2.5*x1^4 - 1.3*x2^3 + 0.5*x3^2 - 1.7*t
+
+数据列：
+
+    [t, x1, x2, x3, u]
+
+这个数据和 poisson3d_truth.csv 的形式比较接近，但多了时间项 -1.7*t。
+
+
+5. wave2d_truth.csv
+
+采样范围：
+
+    t ~ Uniform(0, 1)
+    x1, x2 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(t, x1, x2) = exp(x1^2 - 0.5*t) * sin(x2)
+
+数据列：
+
+    [t, x1, x2, u]
+
+注意：
+- x1 出现在指数函数中；
+- x2 出现在 sin 函数中；
+- t 以 -0.5*t 的形式出现在指数函数中。
+
+
+6. wave3d_truth.csv
+
+采样范围：
+
+    t ~ Uniform(0, 1)
+    x1, x2, x3 ~ Uniform(-1, 1)
+
+真值函数：
+
+    u(t, x1, x2, x3) = exp(x1^2 + x3^2 - 0.5*t) * cos(x2)
+
+数据列：
+
+    [t, x1, x2, x3, u]
+
+注意：
+- x1 和 x3 出现在指数函数中；
+- x2 出现在 cos 函数中；
+- t 以 -0.5*t 的形式出现在指数函数中。
+
+
+四、和 SSDE 中 PDE 方程代码的关系
+---------------------------------
+
+SSDE-main\ssde\ssde\pde.py 中定义了这些 PDE 的前向残差形式。
+
+1. Poisson 2D
+
+    Δu = u_x1x1 + u_x2x2
+
+代码残差形式：
+
+    u_x1x1 + u_x2x2
+
+2. Poisson 3D
+
+    Δu = u_x1x1 + u_x2x2 + u_x3x3
+
+代码残差形式：
+
+    u_x1x1 + u_x2x2 + u_x3x3
+
+3. Heat 2D
+
+    u_t - a^2 * (u_x1x1 + u_x2x2)
+
+SSDE 默认 a = 1，因此为：
+
+    u_t - u_x1x1 - u_x2x2
+
+4. Heat 3D
+
+    u_t - a^2 * (u_x1x1 + u_x2x2 + u_x3x3)
+
+SSDE 默认 a = 1，因此为：
+
+    u_t - u_x1x1 - u_x2x2 - u_x3x3
+
+5. Wave 2D
+
+SSDE 代码中的 wave2D_forward 是非线性波动方程残差：
+
+    u_tt - (u_x1x1 + u_x2x2) + u + u^3
+
+6. Wave 3D
+
+SSDE 代码中的 wave3D_forward 是：
+
+    u_tt - (u_x1x1 + u_x2x2 + u_x3x3) - u^2
+
+
+五、重要区别：CSV 中存的不是 PDE 残差
+--------------------------------------
+
+这些 CSV 文件中最后一列是解函数 u 的真值，不是 PDE 右端项 f，也不是 PDE 残差。
+
+因此：
+
+    CSV 最后一列 = u(t, x) 或 u(x)
+
+而不是：
+
+    f(t, x)
+    residual(t, x)
+    boundary condition value only
+    initial condition value only
+
+如果要把这些数据用于 PINN 或 MCTS-PINN 结构搜索，需要根据候选表达式 u 自动微分得到：
+
+    u_t, u_tt, u_x1x1, u_x2x2, u_x3x3 等导数
+
+然后再按照相应 PDE 方程构造残差。
+
+
+六、在代码中的推荐读取方式
+--------------------------
+
+由于 CSV 没有表头，建议这样读取：
+
+    import pandas as pd
+    data = pd.read_csv("data/heat2d_truth.csv", header=None).values
+
+不同文件的切分方式如下。
+
+1. poisson2d_truth.csv
+
+    X = data[:, 0:2]
+    u = data[:, 2]
+
+其中：
+
+    X[:, 0] = x1
+    X[:, 1] = x2
+
+2. poisson3d_truth.csv
+
+    X = data[:, 0:3]
+    u = data[:, 3]
+
+其中：
+
+    X[:, 0] = x1
+    X[:, 1] = x2
+    X[:, 2] = x3
+
+3. heat2d_truth.csv / wave2d_truth.csv
+
+    X = data[:, 0:3]
+    u = data[:, 3]
+
+其中：
+
+    X[:, 0] = t
+    X[:, 1] = x1
+    X[:, 2] = x2
+
+也可以单独拆分：
+
+    t = data[:, 0:1]
+    x = data[:, 1:3]
+    u = data[:, 3]
+
+4. heat3d_truth.csv / wave3d_truth.csv
+
+    X = data[:, 0:4]
+    u = data[:, 4]
+
+其中：
+
+    X[:, 0] = t
+    X[:, 1] = x1
+    X[:, 2] = x2
+    X[:, 3] = x3
+
+也可以单独拆分：
+
+    t = data[:, 0:1]
+    x = data[:, 1:4]
+    u = data[:, 4]
+
+
+七、对 MCTS / PINN / Taylor 结构搜索实验的含义
+----------------------------------------------
+
+如果你的实验是“结构搜索 + 蒙特卡洛树搜索 + PINN/Taylor”，那么这些数据可以理解为：
+
+1. 搜索目标
+
+    恢复解析形式的 u(t, x) 或 u(x)。
+
+2. 输入节点
+
+    poisson2d:
+        x1, x2
+
+    poisson3d:
+        x1, x2, x3
+
+    heat2d / wave2d:
+        t, x1, x2
+
+    heat3d / wave3d:
+        t, x1, x2, x3
+
+3. 监督目标
+
+    CSV 文件最后一列 u。
+
+4. 推荐候选算子
+
+    对 poisson 和 heat 的多项式型数据：
+        add, sub, mul, const, square, cube, fourth_power 等
+
+    对 wave 数据：
+        add, sub, mul, const, exp, sin, cos, square 等
+
+5. 评价方式
+
+    可以使用普通监督误差：
+
+        MSE(u_pred, u_true)
+        RMSE(u_pred, u_true)
+        NRMSE(u_pred, u_true)
+
+    如果加入 PDE 约束，则还需要根据候选表达式计算 PDE 残差。
+
+
+八、总表
+--------
+
+文件：poisson2d_truth.csv
+输入范围：x1, x2 in [-1, 1]
+真值函数：u = 2.5*x1^4 - 1.3*x1^3 + 0.5*x2^2 - 1.7*x2
+列：x1, x2, u
+
+文件：poisson3d_truth.csv
+输入范围：x1, x2, x3 in [-1, 1]
+真值函数：u = 2.5*x1^4 - 1.3*x2^3 + 0.5*x3^2
+列：x1, x2, x3, u
+
+文件：heat2d_truth.csv
+输入范围：t in [0, 1], x1, x2 in [-1, 1]
+真值函数：u = 2.5*x1^4 - 1.3*x2^3 + 0.5*t^2
+列：t, x1, x2, u
+
+文件：heat3d_truth.csv
+输入范围：t in [0, 1], x1, x2, x3 in [-1, 1]
+真值函数：u = 2.5*x1^4 - 1.3*x2^3 + 0.5*x3^2 - 1.7*t
+列：t, x1, x2, x3, u
+
+文件：wave2d_truth.csv
+输入范围：t in [0, 1], x1, x2 in [-1, 1]
+真值函数：u = exp(x1^2 - 0.5*t) * sin(x2)
+列：t, x1, x2, u
+
+文件：wave3d_truth.csv
+输入范围：t in [0, 1], x1, x2, x3 in [-1, 1]
+真值函数：u = exp(x1^2 + x3^2 - 0.5*t) * cos(x2)
+列：t, x1, x2, x3, u
+
+
+九、核心结论
+------------
+
+这 6 个文件是“解析函数 u 的随机采样真值数据”。
+
+它们适合用于：
+- 符号回归；
+- 表达式搜索；
+- MCTS 搜索目标函数；
+- PINN 中对 u 的监督拟合；
+- 在候选表达式基础上进一步构造 PDE 残差约束。
+
+它们不直接等价于：
+- PDE 残差数据；
+- PDE 右端项 f 数据；
+- 完整边界条件数据；
+- 完整初始条件数据；
+- 网格化数值解矩阵。
